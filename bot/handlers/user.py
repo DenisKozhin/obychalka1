@@ -10,12 +10,14 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command, CommandStart
-
-from bot.keyboards.user_kb import get_main_menu_kb
-from bot.utils.logger import logger
-from bot.database.models import User, City, Store
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.keyboards.user_kb import get_main_menu_kb, get_cities_kb, get_stores_kb
+from bot.database.models import User, City, Store
+from bot.database.operations_library import get_user_by_id, get_city_by_id, create_user
+from bot.config import ADMIN_IDS
+from bot.utils.logger import logger
 
 # Создаем роутер для пользовательских команд
 router = Router()
@@ -26,98 +28,13 @@ class RegistrationStates(StatesGroup):
     waiting_for_city = State()  # Ожидание выбора города
     waiting_for_store = State()  # Ожидание выбора магазина
 
-# Функция для создания клавиатуры с городами
-async def get_cities_kb(session: AsyncSession):
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    from aiogram.types import InlineKeyboardButton
-    
-    builder = InlineKeyboardBuilder()
-    
-    # Получаем список городов из БД
-    result = await session.execute(select(City))
-    cities = result.scalars().all()
-    
-    # Если городов нет, создаем тестовые города
-    if not cities:
-        default_cities = ["Київ", "Львів", "Одеса", "Харків", "Дніпро"]
-        for city_name in default_cities:
-            city = City(name=city_name)
-            session.add(city)
-        await session.commit()
-        
-        # Получаем список городов снова
-        result = await session.execute(select(City))
-        cities = result.scalars().all()
-    
-    # Добавляем кнопки для каждого города
-    for city in cities:
-        builder.add(InlineKeyboardButton(
-            text=city.name,
-            callback_data=f"city_{city.city_id}"
-        ))
-    
-    # Настраиваем расположение кнопок (по одной кнопке в строку)
-    builder.adjust(1)
-    
-    return builder.as_markup()
-
-# Функция для создания клавиатуры с магазинами
-async def get_stores_kb(session: AsyncSession, city_id: int):
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    from aiogram.types import InlineKeyboardButton
-    
-    builder = InlineKeyboardBuilder()
-    
-    # Получаем список магазинов для выбранного города
-    result = await session.execute(
-        select(Store).where(Store.city_id == city_id)
-    )
-    stores = result.scalars().all()
-    
-    # Если магазинов нет, создаем тестовые магазины
-    if not stores:
-        # Получаем город
-        city_result = await session.execute(select(City).where(City.city_id == city_id))
-        city = city_result.scalar_one_or_none()
-        
-        if city:
-            # Создаем несколько магазинов для этого города
-            store_count = 3  # Количество тестовых магазинов
-            for i in range(1, store_count + 1):
-                store = Store(name=f"Магазин {city.name} #{i}", city_id=city_id)
-                session.add(store)
-            await session.commit()
-            
-            # Получаем список магазинов снова
-            result = await session.execute(select(Store).where(Store.city_id == city_id))
-            stores = result.scalars().all()
-    
-    # Добавляем кнопки для каждого магазина
-    for store in stores:
-        builder.add(InlineKeyboardButton(
-            text=store.name,
-            callback_data=f"store_{store.store_id}"
-        ))
-    
-    # Добавляем кнопку "Назад" для возврата к выбору города
-    builder.add(InlineKeyboardButton(
-        text="🔙 Назад до вибору міста",
-        callback_data=f"back_to_cities"
-    ))
-    
-    # Настраиваем расположение кнопок (по одной кнопке в строку)
-    builder.adjust(1)
-    
-    return builder.as_markup()
-
 # Обновляем обработчик команды /start для проверки регистрации
 @router.message(CommandStart())
 async def cmd_start_register(message: Message, state: FSMContext, session: AsyncSession):
     user_id = message.from_user.id
     
     # Проверяем, зарегистрирован ли пользователь
-    result = await session.execute(select(User).where(User.user_id == user_id))
-    user = result.scalar_one_or_none()
+    user = await get_user_by_id(session, user_id)
     
     if user:
         # Если пользователь уже зарегистрирован, показываем главное меню
@@ -170,8 +87,7 @@ async def process_city_selection(callback: CallbackQuery, state: FSMContext, ses
     await state.update_data(city_id=city_id)
     
     # Получаем информацию о выбранном городе
-    result = await session.execute(select(City).where(City.city_id == city_id))
-    city = result.scalar_one_or_none()
+    city = await get_city_by_id(session, city_id)
     
     if city:
         # Просим пользователя выбрать магазин
@@ -215,18 +131,15 @@ async def process_store_selection(callback: CallbackQuery, state: FSMContext, se
     user_data = await state.get_data()
     
     # Создаем нового пользователя в базе данных
-    new_user = User(
+    await create_user(
+        session=session,
         user_id=callback.from_user.id,
         first_name=user_data["first_name"],
         last_name=user_data["last_name"],
         city_id=user_data["city_id"],
         store_id=store_id,
-        is_admin=callback.from_user.id in [8067833192]  # Проверяем, является ли пользователь админом
+        is_admin=callback.from_user.id in ADMIN_IDS  # Проверяем, является ли пользователь админом
     )
-    
-    # Сохраняем пользователя в базе данных
-    session.add(new_user)
-    await session.commit()
     
     # Получаем информацию о выбранном магазине
     result = await session.execute(select(Store).where(Store.store_id == store_id))

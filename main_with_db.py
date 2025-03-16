@@ -15,13 +15,19 @@ class RegistrationStates(StatesGroup):
     waiting_for_name = State()  # Ожидание ввода имени
     waiting_for_city = State()  # Ожидание выбора города
     waiting_for_store = State()  # Ожидание выбора магазина
+    edit_profile = State()         # Редактирование профиля
+    edit_profile_name = State()    # Редактирование имени
+    edit_profile_city = State()    # Выбор нового города
+    edit_profile_store = State()   # Выбор нового магазина
 
 # Определяем состояния для администратора
 class AdminStates(StatesGroup):
-    waiting_for_city_name = State()  # Ожидание ввода названия города
-    waiting_for_store_name = State()  # Ожидание ввода названия магазина
-    waiting_for_city_for_store = State()  # Ожидание выбора города для магазина
-    waiting_for_confirm_delete = State()  # Ожидание подтверждения удаления
+    waiting_for_city_name = State()  # Это состояние обязательно должно быть
+    waiting_for_store_name = State()
+    waiting_for_city_for_store = State()
+    waiting_for_confirm_delete = State()
+    waiting_for_store_new_name = State()
+    waiting_for_city_new_name = State()
 
 # Инициализация базы данных SQLite
 DB_PATH = os.path.join(os.getcwd(), "bot.db")
@@ -119,6 +125,54 @@ def save_user(user_id, first_name, last_name, city_id, store_id, is_admin=False)
     # Проверяем, существует ли пользователь
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
+    if user and (city_id is None or store_id is None):
+    # Получаем текущие значения
+        if city_id is None:
+            cursor.execute("SELECT city_id FROM users WHERE user_id = ?", (user_id,))
+            result = cursor.fetchone()
+            if result:
+             city_id = result[0]
+        if store_id is None:
+            cursor.execute("SELECT store_id FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if result:
+                store_id = result[0]
+            
+            
+    # Дополнительная проверка на null значения
+    if first_name is None or last_name is None:
+        # Получаем текущие значения, если пользователь существует
+        if user:
+            cursor.execute("SELECT first_name, last_name FROM users WHERE user_id = ?", (user_id,))
+            current_names = cursor.fetchone()
+            if first_name is None:
+                first_name = current_names[0]
+            if last_name is None:
+                last_name = current_names[1]
+        else:
+            # Для новых пользователей недопустимо отсутствие имени/фамилии
+            conn.close()
+            raise ValueError("Имя и фамилия не могут быть пустыми для нового пользователя")
+    
+    # Если city_id или store_id равны None, сохраняем текущие значения
+    if city_id is None or store_id is None:
+        if user:
+            # Получаем текущие значения
+            if city_id is None:
+                cursor.execute("SELECT city_id FROM users WHERE user_id = ?", (user_id,))
+                city_result = cursor.fetchone()
+                if city_result:
+                    city_id = city_result[0]
+            if store_id is None:
+                cursor.execute("SELECT store_id FROM users WHERE user_id = ?", (user_id,))
+                store_result = cursor.fetchone()
+                if store_result:
+                    store_id = store_result[0]
+    
+    # Убедимся, что все значения не None перед выполнением запроса
+    if first_name is None or last_name is None:
+        conn.close()
+        raise ValueError("Имя и фамилия не могут быть пустыми")
     
     if user:
         # Обновляем данные пользователя
@@ -127,6 +181,11 @@ def save_user(user_id, first_name, last_name, city_id, store_id, is_admin=False)
             (first_name, last_name, city_id, store_id, is_admin, user_id)
         )
     else:
+        # Проверяем все значения перед добавлением нового пользователя
+        if city_id is None or store_id is None:
+            conn.close()
+            raise ValueError("city_id и store_id должны быть указаны для нового пользователя")
+            
         # Добавляем нового пользователя
         cursor.execute(
             "INSERT INTO users (user_id, first_name, last_name, city_id, store_id, is_admin) VALUES (?, ?, ?, ?, ?, ?)",
@@ -143,7 +202,8 @@ def get_user(user_id):
     cursor = conn.cursor()
     
     cursor.execute('''
-    SELECT u.first_name, u.last_name, c.name AS city_name, s.name AS store_name, u.is_admin 
+    SELECT u.first_name, u.last_name, c.name AS city_name, s.name AS store_name, u.is_admin,
+           u.city_id, u.store_id
     FROM users u
     LEFT JOIN cities c ON u.city_id = c.city_id
     LEFT JOIN stores s ON u.store_id = s.store_id
@@ -159,7 +219,9 @@ def get_user(user_id):
             "last_name": user[1],
             "city_name": user[2],
             "store_name": user[3],
-            "is_admin": bool(user[4])
+            "is_admin": bool(user[4]),
+            "city_id": user[5],
+            "store_id": user[6]
         }
     return None
 
@@ -214,6 +276,32 @@ def delete_store(store_id):
     conn.close()
     return True
 
+def update_store_name(store_id, new_name):
+    """Обновление названия магазина"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute("UPDATE stores SET name = ? WHERE store_id = ?", (new_name, store_id))
+    
+    conn.commit()
+    conn.close()
+    return True
+
+def update_city_name(city_id, new_name):
+    """Обновление названия города"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("UPDATE cities SET name = ? WHERE city_id = ?", (new_name, city_id))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        # Город с таким названием уже существует
+        conn.close()
+        return False
+
 # Создание клавиатуры для главного меню
 def get_main_menu_kb():
     builder = ReplyKeyboardBuilder()
@@ -222,11 +310,12 @@ def get_main_menu_kb():
         KeyboardButton(text="📚 Бібліотека знань"),
         KeyboardButton(text="📝 Пройти тест"),
         KeyboardButton(text="🏆 Мої бали"),
-        KeyboardButton(text="📢 Оголошення")
+        KeyboardButton(text="📢 Оголошення"),
+        KeyboardButton(text="👤 Мій профіль")  # Добавлена кнопка профиля
     )
     
-    # Размещаем кнопки в 2 строки по 2 кнопки
-    builder.adjust(2, 2)
+    # Размещаем кнопки в 2 строки по 2 кнопки и последнюю отдельно
+    builder.adjust(2, 2, 1)
     
     return builder.as_markup(resize_keyboard=True)
 
@@ -257,8 +346,10 @@ def get_locations_management_kb():
     
     buttons = [
         InlineKeyboardButton(text="🏙 Добавить город", callback_data="add_city"),
+        InlineKeyboardButton(text="🏙 Редактировать города", callback_data="edit_cities"), # Новая кнопка
         InlineKeyboardButton(text="🏙 Список городов", callback_data="list_cities"),
         InlineKeyboardButton(text="🏪 Добавить магазин", callback_data="add_store"),
+        InlineKeyboardButton(text="🏪 Редактировать магазины", callback_data="edit_stores"), # Новая кнопка
         InlineKeyboardButton(text="🏪 Список магазинов", callback_data="list_stores"),
         InlineKeyboardButton(text="🔙 Назад в админ-меню", callback_data="back_to_admin")
     ]
@@ -405,6 +496,84 @@ def get_confirmation_kb(action, entity_id):
         InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_{action}_{entity_id}"),
         InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_delete")
     )
+    
+    # Размещаем по одной кнопке в строку
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+# Создание инлайн-клавиатуры для списка городов с редактированием
+def get_cities_list_edit_kb():
+    cities = get_cities()
+    builder = InlineKeyboardBuilder()
+    
+    for city_id, city_name in cities:
+        builder.add(InlineKeyboardButton(
+            text=city_name,
+            callback_data=f"edit_city_options_{city_id}"
+        ))
+    
+    # Добавляем кнопку "Назад"
+    builder.add(InlineKeyboardButton(
+        text="🔙 Назад",
+        callback_data="back_to_locations"
+    ))
+    
+    # Размещаем по одной кнопке в строку
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+# Создание инлайн-клавиатуры для списка магазинов с редактированием
+def get_stores_list_edit_kb(city_id):
+    stores = get_stores(city_id)
+    builder = InlineKeyboardBuilder()
+    
+    for store_id, store_name in stores:
+        builder.add(InlineKeyboardButton(
+            text=store_name,
+            callback_data=f"edit_store_options_{store_id}"
+        ))
+    
+    # Добавляем кнопку "Назад"
+    builder.add(InlineKeyboardButton(
+        text="🔙 Назад к списку городов",
+        callback_data="list_stores"
+    ))
+    
+    # Размещаем по одной кнопке в строку
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+# Клавиатура для редактирования в админке
+def get_edit_kb(entity_type, entity_id):
+    builder = InlineKeyboardBuilder()
+    
+    builder.add(
+        InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"edit_{entity_type}_{entity_id}"),
+        InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_{entity_type}_{entity_id}"),
+        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_locations")
+    )
+    
+    # Размещаем по одной кнопке в строку
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+# Создайте клавиатуру для редактирования профиля
+def get_edit_profile_kb():
+    builder = InlineKeyboardBuilder()
+    
+    buttons = [
+        InlineKeyboardButton(text="✏️ Изменить имя и фамилию", callback_data="edit_profile_name"),
+        InlineKeyboardButton(text="🏙 Изменить город", callback_data="edit_profile_city"),
+        InlineKeyboardButton(text="🏪 Изменить магазин", callback_data="edit_profile_store"),
+        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main_menu")
+    ]
+    
+    for button in buttons:
+        builder.add(button)
     
     # Размещаем по одной кнопке в строку
     builder.adjust(1)
@@ -583,6 +752,7 @@ async def process_store_name(message: Message, state: FSMContext):
     city_name = next((name for id, name in cities if id == city_id), "Неизвестный город")
     
     await message.answer(
+        f"Магазин '{store_name}' успешно добавлен в город '{city_name}'.",
         f"Магазин '{store_name}' успешно добавлен в город '{city_name}'.",
         reply_markup=get_locations_management_kb()
     )
@@ -812,6 +982,9 @@ async def process_city_selection_callback(callback: types.CallbackQuery, state: 
 # Обработчик возврата к выбору города
 @dp.callback_query(lambda c: c.data == "back_to_cities")
 async def back_to_city_selection_callback(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем текущее состояние
+    current_state = await state.get_state()
+    
     # Показываем инлайн-клавиатуру с городами
     await callback.message.edit_text(
         "Будь ласка, виберіть ваше місто:",
@@ -819,7 +992,11 @@ async def back_to_city_selection_callback(callback: types.CallbackQuery, state: 
     )
     
     # Возвращаемся к состоянию выбора города
-    await state.set_state(RegistrationStates.waiting_for_city)
+    if current_state == RegistrationStates.waiting_for_store or current_state == RegistrationStates.edit_profile_store:
+        if current_state == RegistrationStates.waiting_for_store:
+            await state.set_state(RegistrationStates.waiting_for_city)
+        else:
+            await state.set_state(RegistrationStates.edit_profile_city)
     
     # Отвечаем на callback-запрос
     await callback.answer()
@@ -849,39 +1026,102 @@ async def process_store_selection_callback(callback: types.CallbackQuery, state:
     stores = get_stores(city_id)
     store_name = next((name for id, name in stores if id == store_id), "Невідомий магазин")
     
-    # Проверяем, является ли пользователь администратором
-    is_admin = callback.from_user.id in ADMIN_IDS
+    # Получаем текущее состояние
+    current_state = await state.get_state()
     
-    # Сохраняем пользователя в базе данных
-    save_user(
-        callback.from_user.id,
-        user_data.get('first_name'),
-        user_data.get('last_name'),
-        city_id,
-        store_id,
-        is_admin  # если ID пользователя в списке админов, устанавливаем флаг админа
-    )
-    
-    # Завершаем регистрацию
-    await callback.message.edit_text(
-        f"Реєстрація завершена!\n\n"
-        f"Ім'я: {user_data.get('first_name')} {user_data.get('last_name')}\n"
-        f"Місто: {city_name}\n"
-        f"Магазин: {store_name}\n\n"
-        f"Тепер ви можете користуватися всіма функціями бота."
-    )
-    
-    # Показываем соответствующее меню
-    if is_admin:
+    try:
+        # Действуем в зависимости от состояния
+        if current_state == RegistrationStates.waiting_for_store:
+            # Проверяем наличие данных пользователя
+            first_name = user_data.get('first_name')
+            last_name = user_data.get('last_name')
+            
+            if not first_name or not last_name:
+                await callback.message.edit_text(
+                    "Помилка: відсутні дані користувача. Почніть реєстрацію заново з команди /start"
+                )
+                await state.clear()
+                await callback.answer()
+                return
+            
+            # Проверяем, является ли пользователь администратором
+            is_admin = callback.from_user.id in ADMIN_IDS
+            
+            # Сохраняем пользователя в базе данных
+            save_user(
+                callback.from_user.id,
+                first_name,
+                last_name,
+                city_id,
+                store_id,
+                is_admin  # если ID пользователя в списке админов, устанавливаем флаг админа
+            )
+            
+            # Завершаем регистрацию
+            await callback.message.edit_text(
+                f"Реєстрація завершена!\n\n"
+                f"Ім'я: {first_name} {last_name}\n"
+                f"Місто: {city_name}\n"
+                f"Магазин: {store_name}\n\n"
+                f"Тепер ви можете користуватися всіма функціями бота."
+            )
+            
+            # Показываем соответствующее меню
+            if is_admin:
+                await callback.message.answer(
+                    "Ви є адміністратором. Виберіть опцію:",
+                    reply_markup=get_admin_menu_kb()
+                )
+            else:
+                # Показываем главное меню
+                await callback.message.answer(
+                    "Виберіть опцію з меню нижче:",
+                    reply_markup=get_main_menu_kb()
+                )
+        elif current_state == RegistrationStates.edit_profile_store:
+            # Обновляем профиль пользователя
+            user_id = callback.from_user.id
+            user = get_user(user_id)
+            
+            if user:
+                try:
+                    # Исправляем ошибку доступа к данным пользователя
+                    save_user(
+                        user_id,
+                        user["first_name"],  # Используем квадратные скобки вместо .get()
+                        user["last_name"],   # Используем квадратные скобки вместо .get()
+                        city_id,
+                        store_id,
+                        user["is_admin"]     # Используем квадратные скобки вместо .get()
+                    )
+                    
+                    # Уведомляем об успешном обновлении
+                    await callback.message.edit_text(
+                        f"Ваш профіль оновлено!\n\n"
+                        f"Ім'я: {user['first_name']} {user['last_name']}\n"
+                        f"Нове місто: {city_name}\n"
+                        f"Новий магазин: {store_name}"
+                    )
+                    
+                    # Показываем главное меню
+                    await callback.message.answer(
+                        "Виберіть опцію з меню нижче:",
+                        reply_markup=get_main_menu_kb()
+                    )
+                except Exception as e:
+                    # Обработка возможных ошибок при сохранении
+                    print(f"Ошибка при обновлении профиля: {e}")
+                    await callback.message.edit_text(
+                        f"Помилка при оновленні профілю: {e}. Спробуйте ще раз."
+                    )
+            else:
+                await callback.message.edit_text(
+                    "Помилка: профіль не знайдено. Будь ласка, зареєструйтеся з допомогою команди /start."
+                )
+    except Exception as e:
+        print(f"Ошибка в process_store_selection_callback: {e}")
         await callback.message.answer(
-            "Ви є адміністратором. Виберіть опцію:",
-            reply_markup=get_admin_menu_kb()
-        )
-    else:
-        # Показываем главное меню
-        await callback.message.answer(
-            "Виберіть опцію з меню нижче:",
-            reply_markup=get_main_menu_kb()
+            f"Виникла помилка: {e}. Будь ласка, спробуйте ще раз або зверніться до адміністратора."
         )
     
     # Сбрасываем состояние
@@ -931,148 +1171,6 @@ async def cmd_help(message: Message):
         "/admin - Доступ до панелі адміністратора (тільки для адміністраторів)",
         parse_mode="HTML"
     )
-
-async def main():
-    print("Инициализация базы данных...")
-    init_db()
-    
-    print("Бот запускается...")
-    await dp.start_polling(bot)
-# Добавьте эти состояния в класс AdminStates
-class AdminStates(StatesGroup):
-    # ... существующие состояния ...
-    waiting_for_store_new_name = State()  # Ожидание нового названия магазина
-    waiting_for_city_new_name = State()   # Ожидание нового названия города
-
-# Добавьте эти состояния в класс RegistrationStates
-class RegistrationStates(StatesGroup):
-    # ... существующие состояния ...
-    edit_profile = State()         # Редактирование профиля
-    edit_profile_name = State()    # Редактирование имени
-    edit_profile_city = State()    # Выбор нового города
-    edit_profile_store = State()   # Выбор нового магазина
-
-# Добавьте эти функции для работы с базой данных
-def update_store_name(store_id, new_name):
-    """Обновление названия магазина"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute("UPDATE stores SET name = ? WHERE store_id = ?", (new_name, store_id))
-    
-    conn.commit()
-    conn.close()
-    return True
-
-def update_city_name(city_id, new_name):
-    """Обновление названия города"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute("UPDATE cities SET name = ? WHERE city_id = ?", (new_name, city_id))
-        conn.commit()
-        conn.close()
-        return True
-    except sqlite3.IntegrityError:
-        # Город с таким названием уже существует
-        conn.close()
-        return False
-
-# Создайте клавиатуру для редактирования профиля
-def get_edit_profile_kb():
-    builder = InlineKeyboardBuilder()
-    
-    buttons = [
-        InlineKeyboardButton(text="✏️ Изменить имя и фамилию", callback_data="edit_profile_name"),
-        InlineKeyboardButton(text="🏙 Изменить город", callback_data="edit_profile_city"),
-        InlineKeyboardButton(text="🏪 Изменить магазин", callback_data="edit_profile_store"),
-        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main_menu")
-    ]
-    
-    for button in buttons:
-        builder.add(button)
-    
-    # Размещаем по одной кнопке в строку
-    builder.adjust(1)
-    
-    return builder.as_markup()
-
-# Клавиатура для редактирования в админке
-def get_edit_kb(entity_type, entity_id):
-    builder = InlineKeyboardBuilder()
-    
-    builder.add(
-        InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"edit_{entity_type}_{entity_id}"),
-        InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_{entity_type}_{entity_id}"),
-        InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_locations")
-    )
-    
-    # Размещаем по одной кнопке в строку
-    builder.adjust(1)
-    
-    return builder.as_markup()
-
-# Создание инлайн-клавиатуры для списка городов с редактированием
-def get_cities_list_edit_kb():
-    cities = get_cities()
-    builder = InlineKeyboardBuilder()
-    
-    for city_id, city_name in cities:
-        builder.add(InlineKeyboardButton(
-            text=city_name,
-            callback_data=f"edit_city_options_{city_id}"
-        ))
-    
-    # Добавляем кнопку "Назад"
-    builder.add(InlineKeyboardButton(
-        text="🔙 Назад",
-        callback_data="back_to_locations"
-    ))
-    
-    # Размещаем по одной кнопке в строку
-    builder.adjust(1)
-    
-    return builder.as_markup()
-
-# Создание инлайн-клавиатуры для списка магазинов с редактированием
-def get_stores_list_edit_kb(city_id):
-    stores = get_stores(city_id)
-    builder = InlineKeyboardBuilder()
-    
-    for store_id, store_name in stores:
-        builder.add(InlineKeyboardButton(
-            text=store_name,
-            callback_data=f"edit_store_options_{store_id}"
-        ))
-    
-    # Добавляем кнопку "Назад"
-    builder.add(InlineKeyboardButton(
-        text="🔙 Назад к списку городов",
-        callback_data="list_stores"
-    ))
-    
-    # Размещаем по одной кнопке в строку
-    builder.adjust(1)
-    
-    return builder.as_markup()
-
-# Добавьте кнопку редактирования профиля в главное меню
-def get_main_menu_kb():
-    builder = ReplyKeyboardBuilder()
-    
-    builder.add(
-        KeyboardButton(text="📚 Бібліотека знань"),
-        KeyboardButton(text="📝 Пройти тест"),
-        KeyboardButton(text="🏆 Мої бали"),
-        KeyboardButton(text="📢 Оголошення"),
-        KeyboardButton(text="👤 Мій профіль")  # Добавлена кнопка профиля
-    )
-    
-    # Размещаем кнопки в 2 строки по 2 кнопки и последнюю отдельно
-    builder.adjust(2, 2, 1)
-    
-    return builder.as_markup(resize_keyboard=True)
 
 # Обработчик для редактирования профиля
 @dp.message(lambda m: m.text == "👤 Мій профіль")
@@ -1153,10 +1251,33 @@ async def process_edit_name(message: Message, state: FSMContext):
 # Обработчик редактирования города
 @dp.callback_query(lambda c: c.data == "edit_profile_city")
 async def edit_profile_city_command(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    
+    if not user:
+        await callback.message.edit_text(
+            "Помилка: профіль не знайдено. Будь ласка, зареєструйтеся з допомогою команди /start."
+        )
+        await callback.answer()
+        return
+    
+    # Сохраняем данные о пользователе в состоянии (это ключевое изменение)
+    await state.update_data(
+        user_id=user_id,
+        first_name=user["first_name"],
+        last_name=user["last_name"],
+        city_id=user["city_id"],
+        store_id=user["store_id"],
+        is_admin=user["is_admin"]
+    )
+    
+    # Показываем список городов
     await callback.message.edit_text(
         "Виберіть новий город:",
         reply_markup=get_cities_kb()
     )
+    
+    # Устанавливаем состояние выбора города
     await state.set_state(RegistrationStates.edit_profile_city)
     await callback.answer()
 
@@ -1183,92 +1304,6 @@ async def process_edit_city(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(RegistrationStates.edit_profile_store)
     
     await callback.answer()
-
-# Обработчик выбора нового магазина
-@dp.callback_query(RegistrationStates.edit_profile_store, lambda c: c.data and c.data.startswith("store_"))
-async def process_edit_store(callback: types.CallbackQuery, state: FSMContext):
-    # Извлекаем ID магазина из callback_data
-    store_id = int(callback.data.split("_")[1])
-    
-    # Получаем данные состояния
-    user_data = await state.get_data()
-    city_id = user_data.get('city_id')
-    
-    if not city_id:
-        await callback.message.answer(
-            "Помилка: не вибрано місто. Спробуйте ще раз."
-        )
-        await state.clear()
-        await callback.answer()
-        return
-    
-    # Получаем информацию о выбранном городе и магазине
-    cities = get_cities()
-    city_name = next((name for id, name in cities if id == city_id), "Невідоме місто")
-    
-    stores = get_stores(city_id)
-    store_name = next((name for id, name in stores if id == store_id), "Невідомий магазин")
-    
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    
-    if user:
-        # Обновляем профиль пользователя
-        save_user(
-            user_id,
-            user.get("first_name"),
-            user.get("last_name"),
-            city_id,
-            store_id,
-            user.get("is_admin", False)
-        )
-        
-        # Уведомляем об успешном обновлении
-        await callback.message.edit_text(
-            f"Ваш профіль оновлено!\n\n"
-            f"Ім'я: {user.get('first_name')} {user.get('last_name')}\n"
-            f"Нове місто: {city_name}\n"
-            f"Новий магазин: {store_name}"
-        )
-        
-        # Показываем главное меню
-        await callback.message.answer(
-            "Виберіть опцію з меню нижче:",
-            reply_markup=get_main_menu_kb()
-        )
-    else:
-        await callback.message.edit_text(
-            "Помилка: профіль не знайдено. Будь ласка, зареєструйтеся з допомогою команди /start."
-        )
-    
-    # Сбрасываем состояние
-    await state.clear()
-    
-    await callback.answer()
-
-# Обработчики для редактирования городов и магазинов в админке
-
-# Добавляем пункт редактирования в меню управления локациями
-def get_locations_management_kb():
-    builder = InlineKeyboardBuilder()
-    
-    buttons = [
-        InlineKeyboardButton(text="🏙 Добавить город", callback_data="add_city"),
-        InlineKeyboardButton(text="🏙 Редактировать города", callback_data="edit_cities"), # Новая кнопка
-        InlineKeyboardButton(text="🏙 Список городов", callback_data="list_cities"),
-        InlineKeyboardButton(text="🏪 Добавить магазин", callback_data="add_store"),
-        InlineKeyboardButton(text="🏪 Редактировать магазины", callback_data="edit_stores"), # Новая кнопка
-        InlineKeyboardButton(text="🏪 Список магазинов", callback_data="list_stores"),
-        InlineKeyboardButton(text="🔙 Назад в админ-меню", callback_data="back_to_admin")
-    ]
-    
-    for button in buttons:
-        builder.add(button)
-    
-    # Размещаем по одной кнопке в строку
-    builder.adjust(1)
-    
-    return builder.as_markup()
 
 # Обработчик редактирования городов
 @dp.callback_query(lambda c: c.data == "edit_cities")
@@ -1297,52 +1332,247 @@ async def edit_stores_command(callback: types.CallbackQuery):
         reply_markup=get_stores_list_kb()
     )
     await callback.answer()
-
-# Обработчик выбора опций редактирования города
-@dp.callback_query(lambda c: c.data and c.data.startswith("edit_city_options_"))
-async def edit_city_options_command(callback: types.CallbackQuery):
-    city_id = int(callback.data.split("_")[3])
+# 2. Исправление обработчика нажатия кнопки "Изменить магазин"
+@dp.callback_query(lambda c: c.data == "edit_profile_store")
+async def edit_profile_store_command(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    user = get_user(user_id)
     
-    cities = get_cities()
-    city_name = next((name for id, name in cities if id == city_id), "Неизвестный город")
-    
-    await callback.message.edit_text(
-        f"Город: {city_name}\n\nВыберите действие:",
-        reply_markup=get_edit_kb("city", city_id)
-    )
-    await callback.answer()
-
-# Обработчик выбора опций редактирования магазина
-@dp.callback_query(lambda c: c.data and c.data.startswith("edit_store_options_"))
-async def edit_store_options_command(callback: types.CallbackQuery):
-    store_id = int(callback.data.split("_")[3])
-    
-    # Получаем название магазина
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, city_id FROM stores WHERE store_id = ?", (store_id,))
-    store_data = cursor.fetchone()
-    conn.close()
-    
-    if not store_data:
+    if not user:
         await callback.message.edit_text(
-            "Магазин не найден.",
-            reply_markup=get_stores_list_kb()
+            "Помилка: профіль не знайдено. Будь ласка, зареєструйтеся з допомогою команди /start."
         )
         await callback.answer()
         return
     
-    store_name, city_id = store_data
-    
-    await callback.message.edit_text(
-        f"Магазин: {store_name}\n\nВыберите действие:",
-        reply_markup=get_edit_kb("store", store_id)
+    # Сохраняем данные о пользователе в состоянии (это ключевое изменение)
+    await state.update_data(
+        user_id=user_id,
+        first_name=user["first_name"],
+        last_name=user["last_name"],
+        city_id=user["city_id"],
+        store_id=user["store_id"],
+        is_admin=user["is_admin"]
     )
+    
+    # Показываем список магазинов выбранного города
+    await callback.message.edit_text(
+        f"Виберіть новий магазин для міста {user['city_name']}:",
+        reply_markup=get_stores_kb(user["city_id"])
+    )
+    
+    # Устанавливаем состояние выбора магазина
+    await state.set_state(RegistrationStates.edit_profile_store)
     await callback.answer()
+
+# 3. Исправление обработчика выбора города
+@dp.callback_query(lambda c: c.data and c.data.startswith("city_"))
+async def process_city_selection_callback(callback: types.CallbackQuery, state: FSMContext):
+    # Извлекаем ID города из callback_data
+    city_id = int(callback.data.split("_")[1])
+    
+    # Получаем текущее состояние
+    current_state = await state.get_state()
+    
+    # Получаем данные состояния
+    user_data = await state.get_data()
+    
+    # Получаем информацию о выбранном городе
+    cities = get_cities()
+    city_name = next((name for id, name in cities if id == city_id), "Невідоме місто")
+    
+    # Обновляем данные состояния с новым городом
+    await state.update_data(city_id=city_id)
+    
+    # Показываем инлайн-клавиатуру с магазинами
+    await callback.message.edit_text(
+        f"Ви вибрали місто: {city_name}\n\nТепер, будь ласка, виберіть ваш магазин:",
+        reply_markup=get_stores_kb(city_id)
+    )
+    
+    # Переходим к состоянию выбора магазина в зависимости от текущего состояния
+    if current_state == RegistrationStates.waiting_for_city:
+        await state.set_state(RegistrationStates.waiting_for_store)
+    elif current_state == RegistrationStates.edit_profile_city:
+        await state.set_state(RegistrationStates.edit_profile_store)
+    
+    # Отвечаем на callback-запрос
+    await callback.answer()
+
+# 4. Исправление обработчика выбора магазина для разделения логики
+@dp.callback_query(lambda c: c.data and c.data.startswith("store_"))
+async def process_store_selection_callback(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        # Извлекаем ID магазина из callback_data
+        store_id = int(callback.data.split("_")[1])
+        
+        # Получаем текущее состояние
+        current_state = await state.get_state()
+        
+        # Получаем данные состояния
+        user_data = await state.get_data()
+        city_id = user_data.get('city_id')
+        
+        if not city_id:
+            await callback.message.edit_text(
+                "Помилка: не вибрано місто. Почніть реєстрацію заново з команди /start"
+            )
+            await state.clear()
+            await callback.answer()
+            return
+        
+        # Получаем информацию о выбранном городе и магазине
+        cities = get_cities()
+        city_name = next((name for id, name in cities if id == city_id), "Невідоме місто")
+        
+        stores = get_stores(city_id)
+        store_name = next((name for id, name in stores if id == store_id), "Невідомий магазин")
+        
+        # РАЗДЕЛЯЕМ ЛОГИКУ в зависимости от состояния
+        if current_state == RegistrationStates.waiting_for_store:
+            # Это новая регистрация
+            first_name = user_data.get('first_name')
+            last_name = user_data.get('last_name')
+            
+            if not first_name or not last_name:
+                await callback.message.edit_text(
+                    "Помилка: відсутні дані користувача. Почніть реєстрацію заново з команди /start"
+                )
+                await state.clear()
+                await callback.answer()
+                return
+            
+            # Проверяем, является ли пользователь администратором
+            is_admin = callback.from_user.id in ADMIN_IDS
+            
+            # Сохраняем пользователя в базе данных
+            save_user(
+                callback.from_user.id,
+                first_name,
+                last_name,
+                city_id,
+                store_id,
+                is_admin
+            )
+            
+            # Завершаем регистрацию
+            await callback.message.edit_text(
+                f"Реєстрація завершена!\n\n"
+                f"Ім'я: {first_name} {last_name}\n"
+                f"Місто: {city_name}\n"
+                f"Магазин: {store_name}\n\n"
+                f"Тепер ви можете користуватися всіма функціями бота."
+            )
+            
+            # Показываем соответствующее меню
+            if is_admin:
+                await callback.message.answer(
+                    "Ви є адміністратором. Виберіть опцію:",
+                    reply_markup=get_admin_menu_kb()
+                )
+            else:
+                await callback.message.answer(
+                    "Виберіть опцію з меню нижче:",
+                    reply_markup=get_main_menu_kb()
+                )
+        
+        elif current_state == RegistrationStates.edit_profile_store:
+            # Это редактирование профиля
+            
+            # Получаем информацию о пользователе из состояния
+            # (должна быть сохранена в обработчиках edit_profile_city_command или edit_profile_store_command)
+            user_id = user_data.get('user_id') or callback.from_user.id
+            first_name = user_data.get('first_name')
+            last_name = user_data.get('last_name')
+            is_admin = user_data.get('is_admin')
+            
+            # Если данных нет в состоянии, получаем их из базы данных
+            if not first_name or not last_name:
+                user = get_user(user_id)
+                if user:
+                    first_name = user["first_name"]
+                    last_name = user["last_name"]
+                    is_admin = user["is_admin"]
+                else:
+                    await callback.message.edit_text(
+                        "Помилка: профіль не знайдено. Будь ласка, зареєструйтеся з допомогою команди /start."
+                    )
+                    await state.clear()
+                    await callback.answer()
+                    return
+            
+            # Обновляем профиль пользователя
+            save_user(
+                user_id,
+                first_name,
+                last_name,
+                city_id,
+                store_id,
+                is_admin
+            )
+            
+            # Уведомляем об успешном обновлении
+            await callback.message.edit_text(
+                f"Ваш профіль оновлено!\n\n"
+                f"Ім'я: {first_name} {last_name}\n"
+                f"Нове місто: {city_name}\n"
+                f"Новий магазин: {store_name}"
+            )
+            
+            # Показываем главное меню
+            await callback.message.answer(
+                "Виберіть опцію з меню нижче:",
+                reply_markup=get_main_menu_kb()
+            )
+        
+        else:
+            # Неизвестное состояние
+            await callback.message.edit_text(
+                f"Помилка: неочікуваний стан ({current_state}). Будь ласка, спробуйте ще раз."
+            )
+    
+    except Exception as e:
+        print(f"Ошибка в process_store_selection_callback: {e}")
+        await callback.message.answer(
+            f"Виникла помилка: {e}. Будь ласка, спробуйте ще раз або зверніться до адміністратора."
+        )
+    
+    # Сбрасываем состояние
+    await state.clear()
+    
+    # Отвечаем на callback-запрос
+    await callback.answer()
+
+# 5. Исправление обработчика возврата к выбору города
+@dp.callback_query(lambda c: c.data == "back_to_cities")
+async def back_to_city_selection_callback(callback: types.CallbackQuery, state: FSMContext):
+    # Получаем текущее состояние
+    current_state = await state.get_state()
+    
+    # Получаем данные состояния и сохраняем их (чтобы не потерять при смене состояния)
+    user_data = await state.get_data()
+    
+    # Показываем инлайн-клавиатуру с городами
+    await callback.message.edit_text(
+        "Будь ласка, виберіть ваше місто:",
+        reply_markup=get_cities_kb()
+    )
+    
+    # Возвращаемся к состоянию выбора города в зависимости от текущего состояния
+    if current_state == RegistrationStates.waiting_for_store:
+        await state.set_state(RegistrationStates.waiting_for_city)
+    elif current_state == RegistrationStates.edit_profile_store:
+        await state.set_state(RegistrationStates.edit_profile_city)
+    
+    # Отвечаем на callback-запрос
+    await callback.answer()
+
+
 
 # Обработчик редактирования названия города
 @dp.callback_query(lambda c: c.data and c.data.startswith("edit_city_"))
 async def edit_city_name_command(callback: types.CallbackQuery, state: FSMContext):
+    # Проверяем, что callback_data имеет формат "edit_city_ID"
     city_id = int(callback.data.split("_")[2])
     
     # Сохраняем ID города
@@ -1358,87 +1588,122 @@ async def edit_city_name_command(callback: types.CallbackQuery, state: FSMContex
     await callback.answer()
 
 # Обработчик ввода нового названия города
-@dp.message(AdminStates.waiting_for_city_new_name)
-async def process_city_new_name(message: Message, state: FSMContext):
-    new_city_name = message.text.strip()
+@dp.callback_query(lambda c: c.data == "edit_profile_store")
+async def edit_profile_store_command(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    user = get_user(user_id)
+    
+    if not user:
+        await callback.message.edit_text(
+            "Помилка: профіль не знайдено. Почніть реєстрацію заново з команди /start."
+        )
+        await callback.answer()
+        return
+    
+    # Сохраняем ID города в состоянии
+    city_id = user["city_id"]
+    await state.update_data(city_id=city_id)
+    
+    # Показываем список магазинов выбранного города
+    await callback.message.edit_text(
+        f"Виберіть новий магазин для міста {user['city_name']}:",
+        reply_markup=get_stores_kb(city_id)
+    )
+    
+    # Устанавливаем состояние редактирования магазина
+    await state.set_state(RegistrationStates.edit_profile_store)
+    await callback.answer()
+
+# 2. Модифицированный обработчик выбора магазина (process_store_selection_callback)
+@dp.callback_query(lambda c: c.data and c.data.startswith("store_"))
+async def process_store_selection_callback(callback: types.CallbackQuery, state: FSMContext):
+    # Извлекаем ID магазина из callback_data
+    store_id = int(callback.data.split("_")[1])
+    
+    # Получаем текущее состояние
+    current_state = await state.get_state()
     
     # Получаем данные состояния
     user_data = await state.get_data()
     city_id = user_data.get('city_id')
     
     if not city_id:
-        await message.answer(
-            "Ошибка: не выбран город. Попробуйте снова.",
-            reply_markup=get_locations_management_kb()
+        await callback.message.edit_text(
+            "Помилка: не вибрано місто. Почніть реєстрацію заново з команди /start"
         )
         await state.clear()
+        await callback.answer()
         return
     
-    # Обновляем название города
-    success = update_city_name(city_id, new_city_name)
+    # Получаем информацию о выбранном городе и магазине
+    cities = get_cities()
+    city_name = next((name for id, name in cities if id == city_id), "Невідоме місто")
     
-    if success:
-        await message.answer(
-            f"Название города успешно изменено на '{new_city_name}'.",
-            reply_markup=get_locations_management_kb()
-        )
-    else:
-        await message.answer(
-            f"Город с названием '{new_city_name}' уже существует.",
-            reply_markup=get_locations_management_kb()
-        )
+    stores = get_stores(city_id)
+    store_name = next((name for id, name in stores if id == store_id), "Невідомий магазин")
     
+    # Проверяем текущее состояние и действуем соответственно
+    if current_state == RegistrationStates.waiting_for_store:
+        # Регистрация нового пользователя
+        first_name = user_data.get('first_name')
+        last_name = user_data.get('last_name')
+        
+        if not first_name or not last_name:
+            await callback.message.edit_text(
+                "Помилка: відсутні дані користувача. Почніть реєстрацію заново з команди /start"
+            )
+            await state.clear()
+            await callback.answer()
+            return
+        
+        # Обычная логика регистрации
+        # ...
+    elif current_state == RegistrationStates.edit_profile_store:
+        # Редактирование профиля - получаем данные пользователя НЕ из состояния, а из базы данных
+        user_id = callback.from_user.id
+        user = get_user(user_id)
+        
+        if user:
+            # Обновляем профиль, сохраняя имя и фамилию из базы данных
+            save_user(
+                user_id,
+                user["first_name"],
+                user["last_name"],
+                city_id,
+                store_id,
+                user["is_admin"]
+            )
+            
+            # Уведомляем об успешном обновлении
+            await callback.message.edit_text(
+                f"Ваш профіль оновлено!\n\n"
+                f"Ім'я: {user['first_name']} {user['last_name']}\n"
+                f"Нове місто: {city_name}\n"
+                f"Новий магазин: {store_name}"
+            )
+            
+            # Показываем главное меню
+            await callback.message.answer(
+                "Виберіть опцію з меню нижче:",
+                reply_markup=get_main_menu_kb()
+            )
+        else:
+            await callback.message.edit_text(
+                "Помилка: профіль не знайдено. Будь ласка, зареєструйтеся з допомогою команди /start."
+            )
+    
+    # Сбрасываем состояние
     await state.clear()
-
-# Обработчик редактирования названия магазина
-@dp.callback_query(lambda c: c.data and c.data.startswith("edit_store_"))
-async def edit_store_name_command(callback: types.CallbackQuery, state: FSMContext):
-    store_id = int(callback.data.split("_")[2])
     
-    # Сохраняем ID магазина
-    await state.update_data(store_id=store_id)
-    
-    # Получаем название магазина
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM stores WHERE store_id = ?", (store_id,))
-    store_data = cursor.fetchone()
-    conn.close()
-    
-    store_name = store_data[0] if store_data else "Неизвестный магазин"
-    
-    await callback.message.edit_text(
-        f"Введите новое название для магазина '{store_name}':"
-    )
-    await state.set_state(AdminStates.waiting_for_store_new_name)
+    # Отвечаем на callback-запрос
     await callback.answer()
 
-# Обработчик ввода нового названия магазина
-@dp.message(AdminStates.waiting_for_store_new_name)
-async def process_store_new_name(message: Message, state: FSMContext):
-    new_store_name = message.text.strip()
+async def main():
+    print("Инициализация базы данных...")
+    init_db()
     
-    # Получаем данные состояния
-    user_data = await state.get_data()
-    store_id = user_data.get('store_id')
-    
-    if not store_id:
-        await message.answer(
-            "Ошибка: не выбран магазин. Попробуйте снова.",
-            reply_markup=get_locations_management_kb()
-        )
-        await state.clear()
-        return
-    
-    # Обновляем название магазина
-    update_store_name(store_id, new_store_name)
-    
-    await message.answer(
-        f"Название магазина успешно изменено на '{new_store_name}'.",
-        reply_markup=get_locations_management_kb()
-    )
-    
-    await state.clear()
+    print("Бот запускается...")
+    await dp.start_polling(bot)
 
 if __name__ == '__main__':
     try:
@@ -1446,4 +1711,4 @@ if __name__ == '__main__':
     except (KeyboardInterrupt, SystemExit):
         print("Бот остановлен!")
     except Exception as e:
-        print(f"Ошибка: {e}")
+                print(f"Ошибка: {e}")

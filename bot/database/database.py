@@ -30,6 +30,7 @@ async_engine = create_async_engine(
     echo=False
 )
 
+
 # Создаем фабрику сессий для синхронного использования
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

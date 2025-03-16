@@ -7,20 +7,14 @@ if __name__ == "__main__":
 
 from aiogram import Router, F
 from aiogram.types import Message
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.keyboards.user_kb import get_main_menu_kb
-from bot.config import ADMIN_IDS
-from bot.database.models import User
+from bot.utils.logger import logger
 
 # Создаем роутер для общих команд
 router = Router()
-
-# Обработка команды /start передает управление в user.py
-# Этот обработчик больше не нужен, так как мы перенесли логику в user.py
-# Оставляем только обработчик help
 
 # Обработка команды /help
 @router.message(Command("help"))

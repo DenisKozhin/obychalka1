@@ -1,79 +1,108 @@
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import User, City, Store
 
-# Функции для работы с городами
-async def get_cities(session: AsyncSession):
-    """Получение списка всех городов"""
-    result = await session.execute(select(City))
-    return result.scalars().all()
 
-async def get_city_by_id(session: AsyncSession, city_id: int):
-    """Получение города по ID"""
-    return await session.get(City, city_id)
+# Добавьте эти функции в bot/database/operations_library.py
 
-async def create_default_cities(session: AsyncSession):
-    """Создание стандартных городов, если их нет в базе"""
-    cities = await get_cities(session)
-    
-    if not cities:
-        default_cities = ["Київ", "Львів", "Одеса", "Харків", "Дніпро"]
-        for city_name in default_cities:
-            city = City(name=city_name)
-            session.add(city)
+# Функции для управления городами
+async def create_city(session: AsyncSession, name: str):
+    """Создание нового города"""
+    try:
+        city = City(name=name)
+        session.add(city)
         await session.commit()
+        await session.refresh(city)
+        return city
+    except Exception as e:
+        await session.rollback()
+        if "UNIQUE constraint failed" in str(e):
+            return None  # Город с таким названием уже существует
+        raise e
+
+async def update_city_name(session: AsyncSession, city_id: int, new_name: str):
+    """Обновление названия города"""
+    try:
+        result = await session.execute(
+            select(City).where(City.city_id == city_id)
+        )
+        city = result.scalar_one_or_none()
         
-        # Получаем список городов после добавления
-        return await get_cities(session)
-    
-    return cities
+        if not city:
+            return False
+        
+        city.name = new_name
+        await session.commit()
+        return True
+    except Exception as e:
+        await session.rollback()
+        if "UNIQUE constraint failed" in str(e):
+            return False  # Город с таким названием уже существует
+        raise e
 
-# Функции для работы с магазинами
-async def get_stores_by_city(session: AsyncSession, city_id: int):
-    """Получение списка магазинов для конкретного города"""
-    result = await session.execute(select(Store).where(Store.city_id == city_id))
-    return result.scalars().all()
+async def delete_city(session: AsyncSession, city_id: int):
+    """Удаление города и всех его магазинов"""
+    try:
+        # Удаляем все магазины в городе
+        await session.execute(
+            delete(Store).where(Store.city_id == city_id)
+        )
+        
+        # Удаляем город
+        result = await session.execute(
+            delete(City).where(City.city_id == city_id)
+        )
+        
+        await session.commit()
+        return True
+    except Exception as e:
+        await session.rollback()
+        raise e
 
-async def get_store_by_id(session: AsyncSession, store_id: int):
-    """Получение магазина по ID"""
-    return await session.get(Store, store_id)
+# Функции для управления магазинами
+async def create_store(session: AsyncSession, name: str, city_id: int):
+    """Создание нового магазина"""
+    try:
+        store = Store(name=name, city_id=city_id)
+        session.add(store)
+        await session.commit()
+        await session.refresh(store)
+        return store
+    except Exception as e:
+        await session.rollback()
+        raise e
 
-async def create_default_stores(session: AsyncSession, city_id: int):
-    """Создание стандартных магазинов для города, если их нет"""
-    stores = await get_stores_by_city(session, city_id)
-    
-    if not stores:
-        city = await get_city_by_id(session, city_id)
-        if city:
-            store_count = 3  # Количество тестовых магазинов
-            for i in range(1, store_count + 1):
-                store = Store(name=f"Магазин {city.name} #{i}", city_id=city_id)
-                session.add(store)
-            await session.commit()
-            
-            # Получаем список магазинов после добавления
-            return await get_stores_by_city(session, city_id)
-    
-    return stores
+async def update_store_name(session: AsyncSession, store_id: int, new_name: str):
+    """Обновление названия магазина"""
+    try:
+        result = await session.execute(
+            select(Store).where(Store.store_id == store_id)
+        )
+        store = result.scalar_one_or_none()
+        
+        if not store:
+            return False
+        
+        store.name = new_name
+        await session.commit()
+        return True
+    except Exception as e:
+        await session.rollback()
+        raise e
 
-# Функции для работы с пользователями
-async def get_user_by_id(session: AsyncSession, user_id: int):
-    """Получение пользователя по ID"""
-    result = await session.execute(select(User).where(User.user_id == user_id))
-    return result.scalar_one_or_none()
+async def delete_store(session: AsyncSession, store_id: int):
+    """Удаление магазина"""
+    try:
+        result = await session.execute(
+            delete(Store).where(Store.store_id == store_id)
+        )
+        
+        await session.commit()
+        return True
+    except Exception as e:
+        await session.rollback()
+        raise e
 
-async def create_user(session: AsyncSession, user_id: int, first_name: str, last_name: str, 
-                     city_id: int, store_id: int, is_admin: bool = False):
-    """Создание нового пользователя"""
-    new_user = User(
-        user_id=user_id,
-        first_name=first_name,
-        last_name=last_name,
-        city_id=city_id,
-        store_id=store_id,
-        is_admin=is_admin
-    )
-    
-    session.add(new_user)
-    await session.commit()
-    return new_user
+# Добавьте необходимые импорты в начало файла
+from sqlalchemy import select, delete
+from bot.database.models import City, Store, User

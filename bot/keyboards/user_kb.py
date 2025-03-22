@@ -19,7 +19,7 @@ def get_main_menu_kb():
     builder.adjust(2, 2)
     
     return builder.as_markup(resize_keyboard=True)
-
+    
 # Создание клавиатуры с городами
 async def get_cities_kb(session: AsyncSession):
     """Клавиатура для выбора города"""

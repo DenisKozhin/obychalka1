@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import sys
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -16,6 +16,65 @@ from bot.config import BOT_TOKEN, ADMIN_IDS
 from bot.database.database import Base, async_engine, AsyncSessionLocal
 from bot.database.models import User, City, Store
 from bot.utils.logger import logger
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
+
+from bot.handlers.library_handler import router as library_router
+from bot.handlers.tests import router as tests_router
+from bot.handlers.user import router as user_router  # Import user_router
+from bot.handlers.admin import router as admin_router  # Import admin_router
+import sys
+import os
+from aiogram.types import Message
+
+router = Router()
+sys.path.append(os.path.join(os.path.dirname(__file__), 'bot'))
+
+
+
+# Import middleware
+from bot.middlewares.database import DatabaseMiddleware
+
+# Import all handlers
+from bot.handlers.library_handler import router as library_router
+from bot.handlers.tests import router as tests_router
+
+
+
+
+
+# Инициализация бота и диспетчера
+bot = Bot(token=BOT_TOKEN)
+# Функция для установки команд бота
+async def set_commands(bot: Bot):
+    commands = [
+        BotCommand(command="start", description="Запустить бота"),
+        BotCommand(command="help", description="Показать помощь"),
+        BotCommand(command="admin", description="Панель администратора")
+    ]
+    await bot.set_my_commands(commands)
+
+# Основная асинхронная функция
+async def main():
+    # Инициализация бота и диспетчера
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher(storage=MemoryStorage())
+    
+    # Регистрация middleware
+    dp.update.middleware(DatabaseMiddleware())
+    
+    # Регистрация роутеров
+    dp.include_router(library_router)
+    dp.include_router(tests_router)
+    
+    dp.include_router(admin_router)
+    dp.include_router(user_router)
+    await set_commands(bot)
+
+
+
+
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)

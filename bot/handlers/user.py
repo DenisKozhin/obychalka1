@@ -165,12 +165,21 @@ async def process_store_selection(callback: CallbackQuery, state: FSMContext, se
     
     await callback.answer()
 
-# Обработчики кнопок меню (заглушки на данном этапе)
-@router.message(F.text == "📚 Бібліотека знань")
-async def library_command(message: Message):
-    await message.answer(
-        "Функція бібліотеки знань знаходиться в розробці."
-    )
+# # Обработчики кнопок меню (заглушки на данном этапе)
+# @router.message(F.text == "📚 Бібліотека знань")
+# async def library_command(message: Message):
+#     await message.answer(
+#         "Функція бібліотеки знань знаходиться в розробці."
+#     )
+@dp.message(F.text == "📚 Бібліотека знань")
+async def simple_library_command(message: types.Message, session: AsyncSession = None):
+    try:
+        await message.answer("Добро пожаловать в библиотеку знаний! Функция находится в разработке.")
+        # Здесь можно добавить более сложную логику позже
+    except Exception as e:
+        print(f"Ошибка в обработчике библиотеки: {e}")
+        await message.answer("Произошла ошибка при доступе к библиотеке знаний.")
+        
 
 @router.message(F.text == "📝 Пройти тест")
 async def tests_command(message: Message):

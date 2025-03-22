@@ -1,7 +1,10 @@
 # bot/handlers/__init__.py
 from aiogram import Router
 import logging
+from bot.handlers.library_handler import router as library_router
+from bot.handlers.tests import router as tests_router
 
+# Импортируйте другие роутеры, если есть
 logger = logging.getLogger(__name__)
 
 def setup_routers() -> Router:

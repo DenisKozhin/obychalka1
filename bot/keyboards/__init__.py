@@ -646,5 +646,9 @@ from database.operations_library import (...)
 """
 
 # Пустой __init__.py
+from bot.keyboards.admin_kb import get_admin_menu_kb
+from bot.keyboards.user_kb import get_main_menu_kb
+from bot.keyboards.library_kb import get_categories_kb, get_article_navigation_kb
+# Импортируйте другие функции клавиатуры
     
     
